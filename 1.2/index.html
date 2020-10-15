@@ -1,0 +1,972 @@
+<html>
+<head>
+<title>Miniboy 1.2: Un procesador didáctico</title>
+<link rel="icon" type="image/png" sizes="16x16" href="images/favicon.png">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<meta charset="UTF-8">
+<style>
+
+body, input, button
+{
+	font-family: monospace;
+}
+
+.background3
+{
+	background-color: peru;
+	background-image: url("images/background.png");
+	background-size: 10cm;
+}
+
+.background1
+{
+	background-color: rgb(230,230,230);
+}
+
+.background2
+{
+	background-color: lemonchiffon
+}
+
+
+.padded
+{
+	padding:20pt;
+}
+
+.margined
+{
+	margin:15pt;
+}
+
+.column
+{
+	float:left;
+}
+
+.bordered
+{
+	border-style:solid;
+	border-width:1pt;
+	
+}
+
+.notbordered
+{
+	border-style:none
+}
+
+.smoothborder
+{
+	border-radius:10pt;
+}
+
+.shadowed
+{
+	box-shadow: 5pt 5pt 0pt 0pt rgba(0,0,0,0.75);
+}
+
+.fullwidth
+{
+	width: 100%;
+}
+
+.halfwidth
+{
+	width: 50%;
+}
+
+.centered
+{
+	text-align:center;
+}
+
+.smaller
+{
+	font-size: smaller;
+}
+
+.larger
+{
+	font-size: larger;
+}
+
+.bold
+{
+	font-weight: bold;
+}
+
+.grayed
+{
+	color:gray
+}
+
+.rightaligned
+{
+	text-align: right;
+}
+
+.inputlabel
+{
+	width:2cm;
+}
+
+.inputInstruction
+{
+	width:6cm;
+}
+
+.periphericValue
+{
+	font-size:1cm;
+}
+
+</style>
+<script>
+    var memorySize = 32;
+	var programSize = 32;
+	var outputSize = 4;
+	var screenWidth = 4;
+	var screenHeight = 4;
+	var screenStartAddress = 16;
+	var processorFrequency = 100;
+	
+	var stackStartAddress = 15;
+	
+	var resetPressed;
+	var stepPressed;
+	var runPressed;
+	var stopPressed;
+	var keyPressed;
+	
+	var step;
+	
+	var stateStopped = 0;
+	var stateRunning = 1;
+	var stateWait = 2;
+	
+	var waitTimer;
+	var timer;
+	var waitKey;
+	
+	var lastKey = 0;
+	var lastGeneratedTone = 0;
+	var lastRandomNumber = 0;
+	
+	var audioContext;
+	var oscillator;
+	var oscillatorConnected;
+	
+	var enableToneGenerator;
+	
+	var memoryLabels;
+	var programLabels;
+
+	var state;
+	var nextState;
+	
+	
+	function DoReset(memory, registers, program)
+	{
+		if(memory)
+		{
+			for(var i = 0; i < memorySize; i++)
+			{
+				var id = "M" + Pad(i, 3);
+				var cell = document.getElementById(id);
+				cell.value = "0";
+			}
+		}
+		if(program)
+		{
+			for(var i = 0; i < programSize; i++)
+			{
+				var id = "P" + Pad(i, 3);
+				var cell = document.getElementById(id);
+				cell.value = "";
+			}
+		}
+		if(registers)
+		{
+			var cell = document.getElementById("RA");
+			cell.value = "0";
+			cell = document.getElementById("RB");
+			cell.value = "0";
+			cell = document.getElementById("RC");
+			cell.value = "0";
+
+			cell = document.getElementById("PC");
+			cell.value = "0";
+		}
+
+				
+	}
+	
+	function RefreshScreen()
+	{
+		for(var i = 0; i < screenHeight; i ++)
+		{
+			for(var j = 0; j < screenWidth; j++)
+			{
+			    var id = "M" + Pad((screenStartAddress + i * screenWidth + j),3);
+				var cell = document.getElementById(id);
+				var bright = parseInt(cell.value,10);
+				var pixel = document.getElementById("SX" + j + "Y" + i);
+				pixel.style.backgroundColor = 'rgb(' + bright + ',' + bright + ',' + bright + ')';				
+			}
+		}
+	}
+	
+	function DoUpdateLabels()
+	{
+		memoryLabels = {};
+
+		for(var i = 0; i < memorySize; i ++)
+		{
+			var cell = document.getElementById("ML" + Pad(i, 3));
+			var value = cell.value.trim().toUpperCase();
+			if(value.length > 0)
+			{
+				memoryLabels[value] = i;
+			}
+		}
+		
+		programLabels = {};
+		
+		for(var i = 0; i < programSize; i ++)
+		{
+			var cell = document.getElementById("PL" + Pad(i, 3));
+			var value = cell.value.trim().toUpperCase();
+			if(value.length > 0)
+			{
+				programLabels[value] = i;
+			}
+		}
+	}
+	
+	function DoGetMemoryCell(descriptor)
+	{
+		var initial = descriptor[0];
+		
+		var result;
+	
+		if(descriptor.includes("["))
+		{
+			var parts = descriptor.split("[");
+			var base = parts[0];
+			var offset = parts[1].slice(0, parts[1].length - 1);
+			var offsetValue = DoGetValue(offset);
+			var baseCell = DoGetMemoryCell(parts[0]);
+			
+			var address = parseInt(baseCell.id.substring(1)) + offsetValue;
+			
+			result = DoGetMemoryCell("@" + address);
+		}
+		else if(initial == '@')
+		{
+			var id = "M" + Pad(parseInt(descriptor.substring(1), 10), 3);
+			result = document.getElementById(id);
+		}
+		else if(descriptor == "A" || descriptor == "B" || descriptor == "C")
+		{
+			result = document.getElementById("R" + descriptor);
+		}
+		else // is a label
+		{
+			var id;
+
+			var address = memoryLabels[descriptor];
+			id = "M" + Pad(address,3);
+			result = document.getElementById(id);
+			
+		}
+				
+		return result;
+
+	}
+	
+	function DoGetValue(descriptor)
+	{
+		var initial = descriptor[0];
+		
+		var result;
+		
+		if(initial == '-' || IsDigit(initial))
+		{
+			// Is a literal
+			
+			result = parseInt(descriptor);
+		}
+		else if((descriptor in programLabels))
+		{
+			// Is a program address
+			
+			result = programLabels[descriptor];
+		}
+		else
+		{
+			// Is a memory cell
+			
+			var cell = DoGetMemoryCell(descriptor);
+			
+			result = parseInt(cell.value, 10);
+		}
+		
+		return result;
+	}
+	
+	function DoInstruction()
+	{
+		var pcCell = document.getElementById("PC");
+		var pc = parseInt(pcCell.value,10);
+		
+		var lineCell = document.getElementById("P" + Pad(pc,3));
+		var line = lineCell.value;
+		
+		if(line.trim().length == 0) { return true; }
+		
+		var parts = RemoveEqualTo(line.toUpperCase().trim().split(" "), "");
+		
+		
+		var opCode = parts[0];
+		var isJump = false;
+		var jumpAddress = 0;
+		
+		var programEnd = false;
+		
+		if(opCode == "MUEVE")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value = DoGetValue(parts[2]);
+			
+			destination.value = "" + value;
+		}
+		else if(opCode == "SUMA" || opCode == "RESTA" || opCode == "MULTIPLICA" || opCode == "DIVIDE")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value1 = DoGetValue(parts[2]);
+			var value2 = DoGetValue(parts[3]);
+			
+			if(opCode == "SUMA") { destination.value = value1 + value2;}
+			else if(opCode == "RESTA") { destination.value = value1 - value2;}
+			else if(opCode == "MULTIPLICA") { destination.value = value1 * value2;}
+			else // opCode == "DIVIDE"
+			{ destination.value = Math.floor(value1 / value2);}
+		}
+		else if(opCode == "MAYOR" || opCode == "MAYORIGUAL" ||
+		        opCode == "MENOR" || opCode == "MENORIGUAL" ||
+				opCode == "IGUAL" || opCode == "DIFERENTE")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value1 = DoGetValue(parts[2]);
+			var value2 = DoGetValue(parts[3]);
+			
+			if(opCode == "MAYOR") { destination.value = (value1 > value2 ? 1 : 0);}
+			else if(opCode == "MAYORIGUAL") { destination.value = (value1 >= value2 ? 1 : 0);}
+			else if(opCode == "MENOR") { destination.value = (value1 < value2 ? 1 : 0);}
+			else if(opCode == "MENORIGUAL") { destination.value = (value1 <= value2 ? 1 : 0);}
+			else if(opCode == "IGUAL") { destination.value = (value1 == value2 ? 1 : 0);}
+			else // opCode == "DIFERENTE"
+			{ destination.value = (value1 != value2 ? 1 : 0);}
+		}
+		else if(opCode == "AND" || opCode == "OR" || opCode == "NOT")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value1 = DoGetValue(parts[2]);
+			var value2 = null;
+			if(opCode != "NOT")
+			{
+				value2 = DoGetValue(parts[3]);
+			}
+
+			if(opCode == "AND") { destination.value = ((value1 != 0) && (value2 != 0) ? 1 : 0);}
+			else if(opCode == "OR") { destination.value = ((value1 != 0) || (value2 != 0) ? 1 : 0);}
+			else // opCode == "NOT"
+			{ destination.value = ((value1 != 0) ? 0 : 1);}
+		}
+		else if(opCode == "SALTASIMAYOR" || opCode == "SALTASIMAYORIGUAL" ||
+		        opCode == "SALTASIMENOR" || opCode == "SALTASIMENORIGUAL" ||
+				opCode == "SALTASIIGUAL" || opCode == "SALTASIDIFERENTE")
+		{
+			var value1 = DoGetValue(parts[1]);
+			var value2 = DoGetValue(parts[2]);
+			var value3 = DoGetValue(parts[3]);
+			
+			if(opCode == "SALTASIMAYOR") { if(value2 > value3) { isJump = true; jumpAddress = value1; } }
+			else if(opCode == "SALTASIMAYORIGUAL") { if(value2 >= value3) { isJump = true; jumpAddress = value1; } }
+			else if(opCode == "SALTASIMENOR") { if(value2 < value3) { isJump = true; jumpAddress = value1; } }
+			else if(opCode == "SALTASIMENORIGUAL") { if(value2 <= value3) { isJump = true; jumpAddress = value1; } }
+			else if(opCode == "SALTASIIGUAL") { if(value2 == value3) { isJump = true; jumpAddress = value1; } }
+			else // opCode == "SALTASIDIFERENTE"
+			{ if(value2 != value3) { isJump = true; jumpAddress = value1; } }
+		}
+		else if(opCode == "SALTASICIERTO" || opCode == "SALTASIFALSO")
+		{
+			var value1 = DoGetValue(parts[1]);
+			var value2 = DoGetValue(parts[2]);
+			
+			if(opCode == "SALTASICIERTO") { if(value2 != 0) { isJump = true; jumpAddress = value1; } }
+			else // opCode == "SALTASIFALSO"
+			{ if(value2 == 0) { isJump = true; jumpAddress = value1; } }
+
+		}
+		else if(opCode == "SALTA")
+		{
+			var value1 = DoGetValue(parts[1]);
+			
+			isJump = true;
+			jumpAddress = value1;
+		}
+		else if(opCode == "ESPERA")
+		{
+			waitTimer = true;
+			timer = DoGetValue(parts[1]);
+			
+		}
+		else if(opCode == "LLAMA")
+		{
+			var value1 = DoGetValue(parts[1]);
+			
+			DoGetMemoryCell("@" + stackStartAddress).value = pc + 1;
+			
+			isJump = true;
+			jumpAddress = value1;
+			
+		}
+		else if(opCode == "RETORNA")
+		{
+			var address = DoGetValue("@" + stackStartAddress);
+			
+			isJump = true;
+			jumpAddress = address;
+			
+		}
+		else if(opCode == "ESPERA_ENTRADA_TECLADO")
+		{
+			waitKey = true;
+		}
+		else if(opCode == "ENTRADA_TECLADO")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			destination.value = lastKey;
+			
+		}
+		else if(opCode == "ENTRADA_TECLADO")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			destination.value = lastKey;
+			
+		}
+		else if(opCode == "NUMERO_ALEATORIO")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value1 = DoGetValue(parts[2]);
+			var value2 = DoGetValue(parts[3]);
+
+			var randomValue = Math.floor(value1 + Math.random() * (value2 - value1 + 1));
+			destination.value = randomValue;
+			lastRandomNumber = randomValue;
+		}
+		else if(opCode == "LIMPIA_PANTALLA")
+		{
+			for(var i = screenStartAddress; i < screenStartAddress + screenHeight * screenWidth; i++)
+			{
+				var id = "M" + Pad(i, 3);
+				var cell = document.getElementById(id);
+				cell.value = "0";
+			}
+		}
+		else if(opCode == "OBTEN_PIXEL")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value1 = DoGetValue(parts[2]);
+			var value2 = DoGetValue(parts[3]);
+			
+			var address = screenStartAddress + value2 * screenWidth + value1;
+			var id = "M" + Pad(address, 3);
+			var cell = document.getElementById(id);
+			destination.value = cell.value;
+		}
+		else if(opCode == "PON_PIXEL")
+		{
+			var value1 = DoGetValue(parts[1]);
+			var value2 = DoGetValue(parts[2]);
+			var value3 = DoGetValue(parts[3]);
+			
+			var address = screenStartAddress + value2 * screenWidth + value1;
+			var id = "M" + Pad(address, 3);
+			var cell = document.getElementById(id);
+			cell.value = value3;
+		}
+		else if(opCode == "EMITE_SONIDO")
+		{
+			var value = DoGetValue(parts[1]);
+			
+			if(audioContext != null)
+			{			
+				oscillator.frequency.value = value;
+				lastGeneratedTone = value;
+				
+				if(!oscillatorConnected)
+				{
+					oscillator.connect(audioContext.destination);				
+					oscillatorConnected = true;
+				}
+			}
+			else
+			{
+				window.alert("Tienes que habilitar el generador de sonidos primero para usar la instrucción " + opCode + " en la línea de programa " + pc);
+				programEnd = true;
+			}
+
+		
+		}
+		else if(opCode == "PARA_SONIDO")
+		{
+			if(audioContext != null)
+			{	
+				if(oscillatorConnected)
+				{
+					oscillator.disconnect(audioContext.destination);
+					oscillatorConnected = false;	
+				}
+			}
+			else
+			{
+				window.alert("Tienes que habilitar el generador de sonidos primero para usar la instrucción " + opCode + " en la línea de programa " + pc);
+				programEnd = true;
+			}			
+		}
+		else
+		{
+			window.alert("Instrucción " + opCode + " no reconocida en línea de programa " + pc);
+			programEnd = true;
+		}
+		
+		if(isJump)
+		{
+			pcCell.value = jumpAddress; 
+		}
+		else
+		{
+			if(pc + 1 >= programSize)
+			{
+				programEnd = true;
+			}
+			else
+			{
+				pcCell.value = pc + 1;
+			}
+		}
+		
+		return programEnd;
+	}
+	
+	function ProcessorTick()
+	{	
+		var showPeripheralsState = false;
+	
+		if(enableToneGenerator)
+		{		
+			audioContext = new AudioContext();
+			oscillator = audioContext.createOscillator();
+			oscillator.type = 'square';
+			oscillator.start();
+			oscillatorConnected = false;
+			
+			var button = document.getElementById("EnableToneGenerator");
+			button.style.visibility = "hidden";
+		}
+		
+	
+		if(resetPressed)
+		{
+			DoReset(true, true, false);
+			nextState = stateStopped;
+		}
+		else if(state == stateRunning)
+		{
+			var programEnd = false;
+			
+			
+			if(stopPressed)
+			{
+				nextState = stateStopped;
+			}
+			else if(waitTimer)
+			{
+				timer -= 1.0 / processorFrequency * 1000;
+				if(timer < 0) { waitTimer = false; }
+				
+			}
+			else if(waitKey)
+			{
+				if(keyPressed) { waitKey = false; }
+			}
+			else
+			{
+				programEnd = DoInstruction();
+			}
+			
+			if(step)
+			{
+				nextState = stateStopped;				
+				step = false;
+				
+			}
+			else if(programEnd)
+			{
+				nextState = stateStopped;
+			}
+
+			
+			showPeripheralsState = true;
+			
+			
+			
+		}
+		else // state == stateStopped
+		{
+			if(runPressed)
+			{
+				nextState = stateRunning;
+			}
+			else if(stepPressed)
+			{
+				nextState = stateRunning;
+				step = true;
+			}
+		}
+		
+		if(state != nextState)
+		{
+			if(nextState == stateStopped)
+			{
+				if(audioContext != null)
+				{
+					if(oscillatorConnected)
+					{
+						oscillator.disconnect(audioContext.destination);
+						oscillatorConnected = false;	
+					}
+				}
+			}
+			else if(nextState == stateRunning)
+			{
+				DoUpdateLabels();
+				lastKey = 0;
+				lastRandomNumber = 0;
+				lastGeneratedTone = 0;
+				waitTimer = false;
+				waitKey = false;
+
+			}
+		
+			state = nextState;
+		}
+
+		if(showPeripheralsState)
+		{
+			RefreshScreen();
+			document.getElementById("TeclaPulsada").innerHTML = Pad(lastKey, 3);
+			document.getElementById("ValorAleatorioGenerado").innerHTML = Pad(lastRandomNumber, 3);
+			document.getElementById("TonoGenerado").innerHTML = Pad(lastGeneratedTone, 3);
+		
+		}
+		
+		resetPressed = false;
+		stepPressed = false;
+		runPressed = false;
+		stopPressed = false;
+		keyPressed = false;
+		enableToneGenerator = false;
+		
+
+	}
+	
+	function Start()
+	{
+		resetPressed = false;
+		stepPressed = false;
+		runPressed = false;
+		stopPressed = false;
+		keyPressed = false;
+		enableToneGenerator = false;
+		
+		step = false;
+	
+		state = stateStopped;
+		nextState = stateStopped;
+	
+		// Init memory
+		
+		DoReset(true, true, true);
+		
+		// Init screen
+		
+		RefreshScreen();
+		
+		// Init keyboard
+		
+		document.addEventListener('keydown', OnKeyPressed, false);
+		
+		// Init processor
+		
+		setInterval(ProcessorTick, 1.0 / processorFrequency * 1000);
+		
+		// Init labels
+		
+		document.getElementById("ML" + Pad(screenStartAddress, 3)).value = "pantalla";
+		document.getElementById("ML" + Pad(stackStartAddress, 3)).value = "direccionRetorno";
+		document.getElementById("ML" + Pad(stackStartAddress - 1, 3)).value = "valorRetorno";
+		document.getElementById("ML" + Pad(stackStartAddress - 2, 3)).value = "parametro1";
+		document.getElementById("ML" + Pad(stackStartAddress - 3, 3)).value = "parametro2";
+		
+	}
+	
+	function OnKeyPressed(e)
+	{
+		lastKey = e.keyCode;
+		keyPressed = true;
+	}
+
+	function OnResetPressed()
+	{
+		resetPressed = true;
+	}
+	
+	function OnRunPressed()
+	{
+		runPressed = true;
+	}
+	
+	function OnStopPressed()
+	{
+		stopPressed = true;
+	}	
+	
+	function OnStepPressed()
+	{
+		stepPressed = true;
+	}	
+	
+	function OnEnableToneGenerator()
+	{
+		enableToneGenerator = true;
+		
+		ProcessorTick();
+	}
+	
+	// Utils
+	
+	function RemoveEqualTo(array, value)
+	{
+		var i = 0;
+		var result = [];
+		for(var j = 0; j < array.length; j++)
+		{
+			if(array[j] != value)
+			{
+				result[i] = array[j];
+				i ++;
+			}
+		}
+		
+		return result;
+	}
+	
+	function Pad(number, length)
+	{
+		var s = number + "";
+		
+		var z = (length - s.length);
+		for(var i = 0; i < z; i ++) { s = "0" + s; }
+		
+		return s;
+	}
+	
+	function IsDigit(character)
+	{
+		var result = character == '0' ||
+					character == '1' ||
+					character == '2' ||
+					character == '3' ||
+					character == '4' ||
+					character == '5' ||
+					character == '6' ||
+					character == '7' ||
+					character == '8' ||
+					character == '9';
+					
+		return result;
+					
+	}
+	
+
+</script>
+</head>
+<body class="background3" onload="Start()">
+<div id="Memoria" class="column bordered smoothborder padded margined background1 shadowed">
+Memoria
+<table>
+<tr><td><input type="text" id="ML000" class="inputlabel notbordered rightaligned background1">:</td><td>0</td><td><input type="text" id="M000"></td></tr>
+<tr><td><input type="text" id="ML001" class="inputlabel notbordered rightaligned background1">:</td><td>1</td><td><input type="text" id="M001"></td></tr>
+<tr><td><input type="text" id="ML002" class="inputlabel notbordered rightaligned background1">:</td><td>2</td><td><input type="text" id="M002"></td></tr>
+<tr><td><input type="text" id="ML003" class="inputlabel notbordered rightaligned background1">:</td><td>3</td><td><input type="text" id="M003"></td></tr>
+<tr><td><input type="text" id="ML004" class="inputlabel notbordered rightaligned background1">:</td><td>4</td><td><input type="text" id="M004"></td></tr>
+<tr><td><input type="text" id="ML005" class="inputlabel notbordered rightaligned background1">:</td><td>5</td><td><input type="text" id="M005"></td></tr>
+<tr><td><input type="text" id="ML006" class="inputlabel notbordered rightaligned background1">:</td><td>6</td><td><input type="text" id="M006"></td></tr>
+<tr><td><input type="text" id="ML007" class="inputlabel notbordered rightaligned background1">:</td><td>7</td><td><input type="text" id="M007"></td></tr>
+<tr><td><input type="text" id="ML008" class="inputlabel notbordered rightaligned background1">:</td><td>8</td><td><input type="text" id="M008"></td></tr>
+<tr><td><input type="text" id="ML009" class="inputlabel notbordered rightaligned background1">:</td><td>9</td><td><input type="text" id="M009"></td></tr>
+<tr><td><input type="text" id="ML010" class="inputlabel notbordered rightaligned background1">:</td><td>10</td><td><input type="text" id="M010"></td></tr>
+<tr><td><input type="text" id="ML011" class="inputlabel notbordered rightaligned background1">:</td><td>11</td><td><input type="text" id="M011"></td></tr>
+<tr><td><input type="text" id="ML012" class="inputlabel notbordered rightaligned background1">:</td><td>12</td><td><input type="text" id="M012"></td></tr>
+<tr><td><input type="text" id="ML013" class="inputlabel notbordered rightaligned background1">:</td><td>13</td><td><input type="text" id="M013"></td></tr>
+<tr><td><input type="text" id="ML014" class="inputlabel notbordered rightaligned background1">:</td><td>14</td><td><input type="text" id="M014"></td></tr>
+<tr><td><input type="text" id="ML015" class="inputlabel notbordered rightaligned background1">:</td><td>15</td><td><input type="text" id="M015"></td></tr>
+<tr><td><input type="text" id="ML016" class="inputlabel notbordered rightaligned background1">:</td><td>16</td><td><input type="text" id="M016"></td></tr>
+<tr><td><input type="text" id="ML017" class="inputlabel notbordered rightaligned background1">:</td><td>17</td><td><input type="text" id="M017"></td></tr>
+<tr><td><input type="text" id="ML018" class="inputlabel notbordered rightaligned background1">:</td><td>18</td><td><input type="text" id="M018"></td></tr>
+<tr><td><input type="text" id="ML019" class="inputlabel notbordered rightaligned background1">:</td><td>19</td><td><input type="text" id="M019"></td></tr>
+<tr><td><input type="text" id="ML020" class="inputlabel notbordered rightaligned background1">:</td><td>20</td><td><input type="text" id="M020"></td></tr>
+<tr><td><input type="text" id="ML021" class="inputlabel notbordered rightaligned background1">:</td><td>21</td><td><input type="text" id="M021"></td></tr>
+<tr><td><input type="text" id="ML022" class="inputlabel notbordered rightaligned background1">:</td><td>22</td><td><input type="text" id="M022"></td></tr>
+<tr><td><input type="text" id="ML023" class="inputlabel notbordered rightaligned background1">:</td><td>23</td><td><input type="text" id="M023"></td></tr>
+<tr><td><input type="text" id="ML024" class="inputlabel notbordered rightaligned background1">:</td><td>24</td><td><input type="text" id="M024"></td></tr>
+<tr><td><input type="text" id="ML025" class="inputlabel notbordered rightaligned background1">:</td><td>25</td><td><input type="text" id="M025"></td></tr>
+<tr><td><input type="text" id="ML026" class="inputlabel notbordered rightaligned background1">:</td><td>26</td><td><input type="text" id="M026"></td></tr>
+<tr><td><input type="text" id="ML027" class="inputlabel notbordered rightaligned background1">:</td><td>27</td><td><input type="text" id="M027"></td></tr>
+<tr><td><input type="text" id="ML028" class="inputlabel notbordered rightaligned background1">:</td><td>28</td><td><input type="text" id="M028"></td></tr>
+<tr><td><input type="text" id="ML029" class="inputlabel notbordered rightaligned background1">:</td><td>29</td><td><input type="text" id="M029"></td></tr>
+<tr><td><input type="text" id="ML030" class="inputlabel notbordered rightaligned background1">:</td><td>30</td><td><input type="text" id="M030"></td></tr>
+<tr><td><input type="text" id="ML031" class="inputlabel notbordered rightaligned background1">:</td><td>31</td><td><input type="text" id="M031"></td></tr>
+</table>
+</div>
+<div class="column">
+<div id="Procesador" class="bordered smoothborder padded margined background1 shadowed">
+Procesador
+<table>
+<tr><td>A</td><td><input type="text" id="RA"></td></tr>
+<tr><td>B</td><td><input type="text" id="RB"></td></tr>
+<tr><td>C</td><td><input type="text" id="RC"></td></tr>
+<tr><td>PC</td><td><input type="text" id="PC"></td></tr>
+</table>
+<table>
+<tr><td><button id="Reset" onclick="OnResetPressed()">Reset</button><button id="Run"  onclick="OnRunPressed()">Run</button><button id="Stop"  onclick="OnStopPressed()">Stop</button><button id="Step" onclick="OnStepPressed()">Step</button></tr>
+</table>
+</div>
+<div id="GeneradorNumerosAleatorios" class="bordered smoothborder padded margined background1 shadowed">
+Generador de números aleatorios
+<table>
+<tr><td><img class="halfwidth" src="images\dice.png"></td><td id="ValorAleatorioGenerado" class="periphericValue bold"></td></tr>
+</table>
+</div>
+<div id="GeneradorTonos" class="bordered smoothborder padded margined background1 shadowed">
+Generador de tonos
+<table>
+<tr><td><img class="halfwidth" src="images\speaker.png"><button id="EnableToneGenerator" onclick="OnEnableToneGenerator()">Habilitar</button></td><td id="TonoGenerado" class="periphericValue bold"></td></tr>
+</table>
+</div>
+<div id="Teclado" class="bordered smoothborder padded margined background1 shadowed">
+Teclado
+<table>
+<tr><td><img class="halfwidth" src="images\keyboard.png"></td><td id="TeclaPulsada" class="periphericValue bold"></td></tr>
+</table>
+</div>
+<div id="Pantalla" class="bordered smoothborder padded margined background1 shadowed">
+Pantalla
+<table class = "fullwidth">
+<tr><td>&nbsp;</td><td class = "centered">0</td><td class = "centered">1</td><td class = "centered">2</td><td class = "centered">3</td></tr>
+<tr><td class = "rightaligned">0</td><td id="SX0Y0" class="bordered">&nbsp;</td><td id="SX1Y0" class="bordered">&nbsp;</td><td id="SX2Y0" class="bordered">&nbsp;</td><td id="SX3Y0" class="bordered">&nbsp;</td></tr>
+<tr><td class = "rightaligned">1</td><td id="SX0Y1" class="bordered">&nbsp;</td><td id="SX1Y1" class="bordered">&nbsp;</td><td id="SX2Y1" class="bordered">&nbsp;</td><td id="SX3Y1" class="bordered">&nbsp;</td></tr>
+<tr><td class = "rightaligned">2</td><td id="SX0Y2" class="bordered">&nbsp;</td><td id="SX1Y2" class="bordered">&nbsp;</td><td id="SX2Y2" class="bordered">&nbsp;</td><td id="SX3Y2" class="bordered">&nbsp;</td></tr>
+<tr><td class = "rightaligned">3</td><td id="SX0Y3" class="bordered">&nbsp;</td><td id="SX1Y3" class="bordered">&nbsp;</td><td id="SX2Y3" class="bordered">&nbsp;</td><td id="SX3Y3" class="bordered">&nbsp;</td></tr>
+</table>
+</div>
+<div id="Informacion" class="bordered smoothborder padded margined background1 shadowed">
+Información
+<table>
+<tr><td><img src="images/logo.png"></td></tr>
+<tr><td>Versión 1.2</td></tr>
+</table>
+</div>
+</div>
+<div id="Programa" class="column bordered smoothborder padded margined background1 shadowed margined">
+Programa
+<table>
+<tr><td><input type="text" id="PL000" class="inputlabel notbordered rightaligned background1">:</td><td>0</td><td><input type="text" class="inputInstruction" id="P000"></td></tr>
+<tr><td><input type="text" id="PL001" class="inputlabel notbordered rightaligned background1">:</td><td>1</td><td><input type="text" class="inputInstruction" id="P001"></td></tr>
+<tr><td><input type="text" id="PL002" class="inputlabel notbordered rightaligned background1">:</td><td>2</td><td><input type="text" class="inputInstruction" id="P002"></td></tr>
+<tr><td><input type="text" id="PL003" class="inputlabel notbordered rightaligned background1">:</td><td>3</td><td><input type="text" class="inputInstruction" id="P003"></td></tr>
+<tr><td><input type="text" id="PL004" class="inputlabel notbordered rightaligned background1">:</td><td>4</td><td><input type="text" class="inputInstruction" id="P004"></td></tr>
+<tr><td><input type="text" id="PL005" class="inputlabel notbordered rightaligned background1">:</td><td>5</td><td><input type="text" class="inputInstruction" id="P005"></td></tr>
+<tr><td><input type="text" id="PL006" class="inputlabel notbordered rightaligned background1">:</td><td>6</td><td><input type="text" class="inputInstruction" id="P006"></td></tr>
+<tr><td><input type="text" id="PL007" class="inputlabel notbordered rightaligned background1">:</td><td>7</td><td><input type="text" class="inputInstruction" id="P007"></td></tr>
+<tr><td><input type="text" id="PL008" class="inputlabel notbordered rightaligned background1">:</td><td>8</td><td><input type="text" class="inputInstruction" id="P008"></td></tr>
+<tr><td><input type="text" id="PL009" class="inputlabel notbordered rightaligned background1">:</td><td>9</td><td><input type="text" class="inputInstruction" id="P009"></td></tr>
+<tr><td><input type="text" id="PL010" class="inputlabel notbordered rightaligned background1">:</td><td>10</td><td><input type="text" class="inputInstruction" id="P010"></td></tr>
+<tr><td><input type="text" id="PL011" class="inputlabel notbordered rightaligned background1">:</td><td>11</td><td><input type="text" class="inputInstruction" id="P011"></td></tr>
+<tr><td><input type="text" id="PL012" class="inputlabel notbordered rightaligned background1">:</td><td>12</td><td><input type="text" class="inputInstruction" id="P012"></td></tr>
+<tr><td><input type="text" id="PL013" class="inputlabel notbordered rightaligned background1">:</td><td>13</td><td><input type="text" class="inputInstruction" id="P013"></td></tr>
+<tr><td><input type="text" id="PL014" class="inputlabel notbordered rightaligned background1">:</td><td>14</td><td><input type="text" class="inputInstruction" id="P014"></td></tr>
+<tr><td><input type="text" id="PL015" class="inputlabel notbordered rightaligned background1">:</td><td>15</td><td><input type="text" class="inputInstruction" id="P015"></td></tr>
+<tr><td><input type="text" id="PL016" class="inputlabel notbordered rightaligned background1">:</td><td>16</td><td><input type="text" class="inputInstruction" id="P016"></td></tr>
+<tr><td><input type="text" id="PL017" class="inputlabel notbordered rightaligned background1">:</td><td>17</td><td><input type="text" class="inputInstruction" id="P017"></td></tr>
+<tr><td><input type="text" id="PL018" class="inputlabel notbordered rightaligned background1">:</td><td>18</td><td><input type="text" class="inputInstruction" id="P018"></td></tr>
+<tr><td><input type="text" id="PL019" class="inputlabel notbordered rightaligned background1">:</td><td>19</td><td><input type="text" class="inputInstruction" id="P019"></td></tr>
+<tr><td><input type="text" id="PL020" class="inputlabel notbordered rightaligned background1">:</td><td>20</td><td><input type="text" class="inputInstruction" id="P020"></td></tr>
+<tr><td><input type="text" id="PL021" class="inputlabel notbordered rightaligned background1">:</td><td>21</td><td><input type="text" class="inputInstruction" id="P021"></td></tr>
+<tr><td><input type="text" id="PL022" class="inputlabel notbordered rightaligned background1">:</td><td>22</td><td><input type="text" class="inputInstruction" id="P022"></td></tr>
+<tr><td><input type="text" id="PL023" class="inputlabel notbordered rightaligned background1">:</td><td>23</td><td><input type="text" class="inputInstruction" id="P023"></td></tr>
+<tr><td><input type="text" id="PL024" class="inputlabel notbordered rightaligned background1">:</td><td>24</td><td><input type="text" class="inputInstruction" id="P024"></td></tr>
+<tr><td><input type="text" id="PL025" class="inputlabel notbordered rightaligned background1">:</td><td>25</td><td><input type="text" class="inputInstruction" id="P025"></td></tr>
+<tr><td><input type="text" id="PL026" class="inputlabel notbordered rightaligned background1">:</td><td>26</td><td><input type="text" class="inputInstruction" id="P026"></td></tr>
+<tr><td><input type="text" id="PL027" class="inputlabel notbordered rightaligned background1">:</td><td>27</td><td><input type="text" class="inputInstruction" id="P027"></td></tr>
+<tr><td><input type="text" id="PL028" class="inputlabel notbordered rightaligned background1">:</td><td>28</td><td><input type="text" class="inputInstruction" id="P028"></td></tr>
+<tr><td><input type="text" id="PL029" class="inputlabel notbordered rightaligned background1">:</td><td>29</td><td><input type="text" class="inputInstruction" id="P029"></td></tr>
+<tr><td><input type="text" id="PL030" class="inputlabel notbordered rightaligned background1">:</td><td>30</td><td><input type="text" class="inputInstruction" id="P030"></td></tr>
+<tr><td><input type="text" id="PL031" class="inputlabel notbordered rightaligned background1">:</td><td>31</td><td><input type="text" class="inputInstruction" id="P031"></td></tr>
+</table>
+</div>
+<div id="Instrucciones" class="column padded margined grayed bold background2">
+Juego de instrucciones
+<table class = "smaller grayed">
+<tr><td>MUEVE  destino, origen</td></tr>
+<tr><td>SUMA destino, origen1, origen2</td></tr>
+<tr><td>RESTA destino, origen1, origen2</td></tr>
+<tr><td>MULTIPLICA destino, origen1, origen2</td></tr>
+<tr><td>DIVIDE destino, origen1, origen2</td></tr>
+<tr><td>MAYOR destino, origen1, origen2</td></tr>
+<tr><td>MAYORIGUAL destino, origen1, origen2</td></tr>
+<tr><td>MENOR destino, origen1, origen2</td></tr>
+<tr><td>MENORIGUAL destino, origen1, origen2</td></tr>
+<tr><td>IGUAL destino, origen1, origen2</td></tr>
+<tr><td>DIFERENTE destino, origen1, origen2</td></tr>
+<tr><td>AND destino, origen1, origen2</td></tr>
+<tr><td>OR destino, origen1, origen2</td></tr>
+<tr><td>NOT destino, origen</td></tr>
+<tr><td>SALTASIMAYOR direccionPrograma, origen1, origen2</td></tr>
+<tr><td>SALTASIMAYORIGUAL direccionPrograma, origen1, origen2</td></tr>
+<tr><td>SALTASIMENOR direccionPrograma, origen1, origen2</td></tr>
+<tr><td>SALTASIMENORIGUAL direccionPrograma, origen1, origen2</td></tr>
+<tr><td>SALTASIIGUAL direccionPrograma, origen1, origen2</td></tr>
+<tr><td>SALTASIDIFERENTE direccionPrograma, origen1, origen2</td></tr>
+<tr><td>SALTASICIERTO direccionPrograma, origen</td></tr>
+<tr><td>SALTASIFALSO direccionPrograma, origen</td></tr>
+<tr><td>SALTA direccionPrograma</td></tr>
+<tr><td>LLAMA direccionPrograma</td></tr>
+<tr><td>RETORNA</td></tr>
+<tr><td>NUMERO_ALEATORIO destino, origen1, origen2</td></tr>
+<tr><td>ESPERA tiempo</td></tr>
+<tr><td>ESPERA_ENTRADA_TECLADO</td></tr>
+<tr><td>ENTRADA_TECLADO destino</td></tr>
+<tr><td>SALIDA_CONSOLA origen</td></tr>
+<tr><td>LIMPIA_PANTALLA</td></tr>
+<tr><td>PON_PIXEL destinoX, destinoY, origen</td></tr>
+<tr><td>EMITE_SONIDO frecuencia</td></tr>
+<tr><td>PARA_SONIDO</td></tr>
+</table>
+</div>
+</body>
+</html>
