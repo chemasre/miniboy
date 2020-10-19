@@ -1,0 +1,15 @@
+1.0
+	- Versión inicial
+1.1
+
+	- Añadido generador de tonos
+
+1.2
+
+	- Añadidos labels y acceso indexado
+
+1.3
+
+	- Añadidos salvado y guardado.
+	- Multiples generadores de tonos.
+	- Instrucción LIMPIA_ENTRADA.
