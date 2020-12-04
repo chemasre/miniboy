@@ -1,12 +1,12 @@
 1.0
-	- Versión inicial
+	- Versión inicial.
 1.1
 
-	- Añadido generador de tonos
+	- Añadido generador de tonos.
 
 1.2
 
-	- Añadidos labels y acceso indexado
+	- Añadidos labels y acceso indexado.
 
 1.3
 
