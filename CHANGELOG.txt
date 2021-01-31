@@ -1,15 +1,30 @@
 1.0
-	- Versión inicial.
+	- Versión inicial
 1.1
 
-	- Añadido generador de tonos.
+	- Añadido generador de tonos
 
 1.2
 
-	- Añadidos labels y acceso indexado.
+	- Añadidos labels y acceso indexado
 
 1.3
 
 	- Añadidos salvado y guardado.
 	- Multiples generadores de tonos.
 	- Instrucción LIMPIA_ENTRADA.
+
+1.4
+        - Añadidas instrucciones MUEVEVALORDIRECCION y MUEVEDIRECCION
+        - Cambio importante en los accesos con offset:
+
+           El registro/celda de memoria o valor que va antes de los corchetes ahora
+           se interpreta como una dirección
+
+           Es decir, si ejecutamos por ejemplo MUEVE A @5[2] no guardaremos en A lo que
+           tenemos en @7 como hasta la versión anterior, sino que interpretaremos como
+           dirección el valor almacenado en @7 y guardaremos en A lo que contenga la celda
+           que tenga esa dirección + 2.
+
+           En particular, si en @7 tuviéramos un 9, la instrucción guardaría en A el valor
+           de la celda @11.
