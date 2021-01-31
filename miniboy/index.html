@@ -1,0 +1,1340 @@
+<html>
+<head>
+<title>Miniboy 1.4</title>
+<link rel="icon" type="image/png" sizes="16x16" href="images/favicon.png">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<meta charset="UTF-8">
+<style>
+
+body, input, button, em
+{
+	font-family: monospace;
+	font-style: normal;
+}
+
+.background3
+{
+	background-color: peru;
+	background-image: url("images/background.png");
+	background-size: 10cm;
+}
+
+.background1
+{
+	background-color: rgb(230,230,230);
+}
+
+.background2
+{
+	background-color: lemonchiffon
+}
+
+
+.padded
+{
+	padding:20pt;
+}
+
+.margined
+{
+	margin:15pt;
+}
+
+.column
+{
+	float:left;
+}
+
+.bordered
+{
+	border-style:solid;
+	border-width:1pt;
+	
+}
+
+.notbordered
+{
+	border-style:none
+}
+
+.smoothborder
+{
+	border-radius:10pt;
+}
+
+.shadowed
+{
+	box-shadow: 5pt 5pt 0pt 0pt rgba(0,0,0,0.75);
+}
+
+.fullwidth
+{
+	width: 100%;
+}
+
+.halfwidth
+{
+	width: 50%;
+}
+
+
+.centered
+{
+	text-align:center;
+}
+
+.smaller
+{
+	font-size: smaller;
+}
+
+.larger
+{
+	font-size: larger;
+}
+
+.bold
+{
+	font-weight: bold;
+}
+
+.grayed
+{
+	color:gray
+}
+
+.rightaligned
+{
+	text-align: right;
+}
+
+.preformated
+{
+	white-space: pre
+}
+
+.inputlabel
+{
+	width:2cm;
+}
+
+.inputInstruction
+{
+	width:6cm;
+}
+
+.periphericValue
+{
+	font-size:1cm;
+}
+
+</style>
+<script>
+	// Configuration
+	
+    var memorySize = 128;
+	var programSize = 128;
+	var screenWidth = 8;
+	var screenHeight = 8;
+	var processorFrequency = 1000;
+	var numOscillators = 1;
+	var screenFrequency = 100;
+	
+	var screenStartAddress;
+	var stackStartAddress;
+	
+	var resetProcessorPressed;
+	var resetMemoryPressed;
+	var resetProgramPressed;
+
+	var stepPressed;
+	var runPressed;
+	var stopPressed;
+	var keyPressed;
+	
+	var step;
+	
+	var stateStopped = 0;
+	var stateRunning = 1;
+	var stateWait = 2;
+	
+	var waitTimer;
+	var timer;
+	var waitKey;
+	
+	var lastKey = 0;
+	var lastGeneratedTone = 0;
+	var lastRandomNumber = 0;
+	
+	var audioContext;
+	var oscillator;
+	var oscillatorConnected;
+	
+	var enableToneGenerator;
+	
+	var memoryLabels;
+	var programLabels;
+	
+	var saveMemoryPressed;
+	var loadMemoryPressed;
+	var loadProgramPressed;
+	
+	var refreshScreenTicks;
+	var refreshScreenTickCount;
+
+	var state;
+	var nextState;
+	
+	
+	function DoReset(memory, processor, program)
+	{
+		if(memory)
+		{
+			for(var i = 0; i < memorySize; i++)
+			{
+				var id = "M" + Pad(i, 3);
+				var cell = document.getElementById(id);
+				cell.value = "0";
+			}
+		}
+		if(program)
+		{
+			for(var i = 0; i < programSize; i++)
+			{
+				var id = "P" + Pad(i, 3);
+				var cell = document.getElementById(id);
+				cell.value = "";
+			}
+		}
+		if(processor)
+		{
+			var cell = document.getElementById("RA");
+			cell.value = "0";
+			cell = document.getElementById("RB");
+			cell.value = "0";
+			cell = document.getElementById("RC");
+			cell.value = "0";
+
+			cell = document.getElementById("PC");
+			cell.value = "0";
+		}
+
+				
+	}
+	
+	function DoRefreshScreen()
+	{
+		for(var i = 0; i < screenHeight; i ++)
+		{
+			for(var j = 0; j < screenWidth; j++)
+			{
+			    var id = "M" + Pad((screenStartAddress + i * screenWidth + j),3);
+				var cell = document.getElementById(id);
+				var bright = parseInt(cell.value,10);
+				var pixel = document.getElementById("SX" + j + "Y" + i);
+				pixel.style.backgroundColor = 'rgb(' + bright + ',' + bright + ',' + bright + ')';				
+			}
+		}
+	}
+	
+	function DoUpdateLabels()
+	{
+		memoryLabels = {};
+
+		for(var i = 0; i < memorySize; i ++)
+		{
+			var cell = document.getElementById("ML" + Pad(i, 3));
+			var value = cell.value.trim().toUpperCase();
+			if(value.length > 0)
+			{
+				memoryLabels[value] = i;
+			}
+		}
+		
+		programLabels = {};
+		
+		for(var i = 0; i < programSize; i ++)
+		{
+			var cell = document.getElementById("PL" + Pad(i, 3));
+			var value = cell.value.trim().toUpperCase();
+			if(value.length > 0)
+			{
+				programLabels[value] = i;
+			}
+		}
+	}
+
+	function DoConfigureMachine()
+	{
+		var url = new URL(window.location);
+		var sp = url.searchParams;
+		if(sp.has("memsize"))
+		{
+			var p = sp.get("memsize");
+			var n = parseInt(p);
+			if(n == 32 || n == 64 || n == 128)
+			{
+				memorySize = n;
+			}
+			else
+			{
+				window.alert("Tamaño de memoria inválido. Los tamaños de memoria soportados son 32, 64 y 128");
+			}
+		}
+		if(sp.has("progsize"))
+		{
+			var p = sp.get("progsize");
+			var n = parseInt(p);
+			if(n == 32 || n == 64 || n == 128)
+			{
+				programSize = n;
+			}
+			else
+			{
+				window.alert("Tamaño de programa inválido. Los tamaños de programa soportados son 32, 64 y 128");
+			}
+		}
+		if(sp.has("channels"))
+		{
+			var p = sp.get("channels");
+			var n = parseInt(p);
+			if(n == 1 || n == 2)
+			{
+				numOscillators = n;
+			}
+			else
+			{
+				window.alert("Número de canales inválido. Las configuraciones de sonido soportadas son 1 o 2 canales");
+			}
+		}
+		if(sp.has("screenres"))
+		{
+			var p = sp.get("screenres");
+			if(p == "4x4")
+			{
+				screenWidth = 4;
+				screenHeight = 4;
+			}
+			else if(p == "8x8")
+			{
+				screenWidth = 8;
+				screenHeight = 8;
+			}
+			else
+			{
+				window.alert("Resolución no válida. Los modos de vídeo soportados son 4x4 y 8x8");
+			}
+			
+		}
+		if(sp.has("procfreq"))
+		{
+			var p = sp.get("procfreq");
+			var n = parseInt(p);
+			if(n > 0 && n <= 1000)
+			{
+				processorFrequency = n;
+			}
+			else
+			{
+				window.alert("Frecuencia de procesador inválida. Debe ser un número entre 0 y 1000");
+			}
+		}
+		if(sp.has("screenfreq"))
+		{
+			var p = sp.get("screenfreq");
+			var n = parseInt(p);
+			if(n > 0 && n <= 1000)
+			{
+				screenFrequency = n;
+			}
+			else
+			{
+				window.alert("Frecuencia de pantalla inválida. Debe ser un número entre 0 y 1000");
+			}
+		}
+		
+		if(screenWidth == 8 && screenHeight == 8 && memorySize < 128)
+		{
+			window.alert("El modo de pantalla de 8x8 requiere un tamaño de memoria de como mínimo 128");
+			window.alert("Aumentaremos el tamaño de la memoria hasta este valor");
+			
+			memorySize = 128;
+
+		}
+	
+	}
+
+	
+	function DoGetMemoryCell(descriptor)
+	{
+		var initial = descriptor[0];
+		
+		var result;
+	
+		if(descriptor.includes("["))
+		{
+			// Has offset
+			
+			var parts = descriptor.split("[");
+			var base = parts[0];
+			var offset = parts[1].slice(0, parts[1].length - 1);
+			var offsetValue = DoGetValue(offset);
+			
+			alert("base is " + base);
+			var baseAddress = DoGetValue(base);
+			alert("baseAddress is " + baseAddress);
+			
+			var address = baseAddress + offsetValue;
+			
+			alert("offsetedAddress is " + address);
+			
+			result = DoGetMemoryCell("@" + address);
+		}
+		else if(IsDigit(initial))
+		{
+			// Is an address
+			
+			var address = parseInt(descriptor);
+			var id = "M" + Pad(address, 3);
+			result = document.getElementById(id);
+			
+		}
+		else if(initial == '@')
+		{
+			var id = "M" + Pad(parseInt(descriptor.substring(1), 10), 3);
+			result = document.getElementById(id);
+		}
+		else if(descriptor == "A" || descriptor == "B" || descriptor == "C")
+		{
+			result = document.getElementById("R" + descriptor);
+		}
+		else // is a label
+		{
+			var id;
+
+			var address = memoryLabels[descriptor];
+			id = "M" + Pad(address,3);
+			result = document.getElementById(id);
+			
+		}
+				
+		return result;
+
+	}
+
+		
+	function DoGetValue(descriptor)
+	{
+		var initial = descriptor[0];
+		
+		var result;
+		
+		if((initial == '-' || IsDigit(initial)) && !descriptor.includes("["))
+		{
+			// Is a literal that isn't a part of an offseted access 
+			
+			result = parseInt(descriptor);
+		}
+		else if((descriptor in programLabels))
+		{
+			// Is a program address
+			
+			result = programLabels[descriptor];
+		}
+		else
+		{
+			// Is a memory cell
+			
+			var cell = DoGetMemoryCell(descriptor);
+			
+			result = parseInt(cell.value, 10);
+		}
+		
+		return result;
+	}
+	
+	function DoInstruction()
+	{
+		var pcCell = document.getElementById("PC");
+		var pc = parseInt(pcCell.value,10);
+		
+		var lineCell = document.getElementById("P" + Pad(pc,3));
+		var line = lineCell.value;
+		
+		if(line.trim().length == 0) { return true; }
+		
+		var parts = RemoveEqualTo(line.toUpperCase().trim().split(" "), "");
+		
+		
+		var opCode = parts[0];
+		var isJump = false;
+		var jumpAddress = 0;
+		
+		var programEnd = false;
+		
+		if(opCode == "MUEVE" || opCode == "MUE")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value = DoGetValue(parts[2]);
+			
+			destination.value = "" + value;
+		}
+		else if(opCode == "MUEVEVALORDIRECCION" || opCode == "MUEVD")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var address = DoGetValue(parts[2]);
+			
+			var value = DoGetValue("@" + address);
+
+			destination.value = "" + value;
+			
+		}
+		else if(opCode == "MUEVEDIRECCION" || opCode == "MUED")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var cell = DoGetMemoryCell(parts[2]);
+			var address = parseInt(cell.id.substring(1, 4));
+			
+			destination.value = "" + address;
+			
+			
+		}
+		else if(opCode == "SUMA" || opCode == "SUM" || opCode == "RESTA" || opCode == "RES" ||
+		       opCode == "MULTIPLICA"  || opCode == "MUL"|| opCode == "DIVIDE"  || opCode == "DIV")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value1 = DoGetValue(parts[2]);
+			var value2 = DoGetValue(parts[3]);
+			
+			if(opCode == "SUMA" || opCode == "SUM") { destination.value = value1 + value2;}
+			else if(opCode == "RESTA" || opCode == "RES") { destination.value = value1 - value2;}
+			else if(opCode == "MULTIPLICA" || opCode == "MUL") { destination.value = value1 * value2;}
+			else // opCode == "DIVIDE" || opCode == "DIV"
+			{ destination.value = Math.floor(value1 / value2);}
+		}
+		else if(opCode == "MAYOR" || opCode == "MA" || opCode == "MAYORIGUAL" || opCode == "MAI" ||
+		        opCode == "MENOR"|| opCode == "ME"  || opCode == "MENORIGUAL" || opCode == "MEI" ||
+				opCode == "IGUAL" || opCode == "IG" || opCode == "DIFERENTE" || opCode == "DIF" )
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value1 = DoGetValue(parts[2]);
+			var value2 = DoGetValue(parts[3]);
+			
+			if(opCode == "MAYOR" || opCode == "MA") { destination.value = (value1 > value2 ? 1 : 0);}
+			else if(opCode == "MAYORIGUAL" || opCode == "MAI") { destination.value = (value1 >= value2 ? 1 : 0);}
+			else if(opCode == "MENOR"  || opCode == "ME") { destination.value = (value1 < value2 ? 1 : 0);}
+			else if(opCode == "MENORIGUAL" || opCode == "MEI") { destination.value = (value1 <= value2 ? 1 : 0);}
+			else if(opCode == "IGUAL" || opCode == "IG") { destination.value = (value1 == value2 ? 1 : 0);}
+			else // opCode == "DIFERENTE" || opCode == "DIF"
+			{ destination.value = (value1 != value2 ? 1 : 0);}
+		}
+		else if(opCode == "AND" || opCode == "OR" || opCode == "NOT")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value1 = DoGetValue(parts[2]);
+			var value2 = null;
+			if(opCode != "NOT")
+			{
+				value2 = DoGetValue(parts[3]);
+			}
+
+			if(opCode == "AND") { destination.value = ((value1 != 0) && (value2 != 0) ? 1 : 0);}
+			else if(opCode == "OR") { destination.value = ((value1 != 0) || (value2 != 0) ? 1 : 0);}
+			else // opCode == "NOT"
+			{ destination.value = ((value1 != 0) ? 0 : 1);}
+		}
+		else if(opCode == "SALTASIMAYOR" || opCode == "SMA" ||opCode == "SALTASIMAYORIGUAL" || opCode == "SMAI" ||
+		        opCode == "SALTASIMENOR" || opCode == "SME" ||opCode == "SALTASIMENORIGUAL" || opCode == "SMEI" ||
+				opCode == "SALTASIIGUAL" || opCode == "SIG" ||opCode == "SALTASIDIFERENTE" || opCode == "SDIF")
+		{
+			var value1 = DoGetValue(parts[1]);
+			var value2 = DoGetValue(parts[2]);
+			var value3 = DoGetValue(parts[3]);
+			
+			if(opCode == "SALTASIMAYOR" || opCode == "SMA") { if(value2 > value3) { isJump = true; jumpAddress = value1; } }
+			else if(opCode == "SALTASIMAYORIGUAL" || opCode == "SMAI") { if(value2 >= value3) { isJump = true; jumpAddress = value1; } }
+			else if(opCode == "SALTASIMENOR"  || opCode == "SME") { if(value2 < value3) { isJump = true; jumpAddress = value1; } }
+			else if(opCode == "SALTASIMENORIGUAL"  || opCode == "SMEI") { if(value2 <= value3) { isJump = true; jumpAddress = value1; } }
+			else if(opCode == "SALTASIIGUAL" || opCode == "SIG") { if(value2 == value3) { isJump = true; jumpAddress = value1; } }
+			else // opCode == "SALTASIDIFERENTE" || opCode == "SDIF"
+			{ if(value2 != value3) { isJump = true; jumpAddress = value1; } }
+		}
+		else if(opCode == "SALTASICIERTO" || opCode == "SC" || opCode == "SALTASIFALSO" || opCode == "SF")
+		{
+			var value1 = DoGetValue(parts[1]);
+			var value2 = DoGetValue(parts[2]);
+			
+			if(opCode == "SALTASICIERTO" || opCode == "SC") { if(value2 != 0) { isJump = true; jumpAddress = value1; } }
+			else // opCode == "SALTASIFALSO" || opCode == "SF"
+			{ if(value2 == 0) { isJump = true; jumpAddress = value1; } }
+
+		}
+		else if(opCode == "SALTA" || opCode == "S")
+		{
+			var value1 = DoGetValue(parts[1]);
+			
+			isJump = true;
+			jumpAddress = value1;
+		}
+		else if(opCode == "ESPERA")
+		{
+			waitTimer = true;
+			timer = DoGetValue(parts[1]);
+			
+		}
+		else if(opCode == "LLAMA" || opCode == "LL")
+		{
+			var value1 = DoGetValue(parts[1]);
+			
+			DoGetMemoryCell("@" + stackStartAddress).value = pc + 1;
+			
+			isJump = true;
+			jumpAddress = value1;
+			
+		}
+		else if(opCode == "RETORNA" || opCode == "RET")
+		{
+			var address = DoGetValue("@" + stackStartAddress);
+			
+			isJump = true;
+			jumpAddress = address;
+			
+		}
+		else if(opCode == "ESPERA_ENTRADA_TECLADO")
+		{
+			waitKey = true;
+		}
+		else if(opCode == "ENTRADA_TECLADO")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			destination.value = lastKey;
+			
+		}
+		else if(opCode == "LIMPIA_ENTRADA_TECLADO")
+		{
+			lastKey = 0;
+		}
+		else if(opCode == "NUMERO_ALEATORIO")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value1 = DoGetValue(parts[2]);
+			var value2 = DoGetValue(parts[3]);
+
+			var randomValue = Math.floor(value1 + Math.random() * (value2 - value1 + 1));
+			destination.value = randomValue;
+			lastRandomNumber = randomValue;
+		}
+		else if(opCode == "LIMPIA_PANTALLA")
+		{
+			for(var i = screenStartAddress; i < screenStartAddress + screenHeight * screenWidth; i++)
+			{
+				var id = "M" + Pad(i, 3);
+				var cell = document.getElementById(id);
+				cell.value = "0";
+			}
+		}
+		else if(opCode == "OBTEN_PIXEL")
+		{
+			var destination = DoGetMemoryCell(parts[1]);
+			var value1 = DoGetValue(parts[2]);
+			var value2 = DoGetValue(parts[3]);
+			
+			var address = screenStartAddress + value2 * screenWidth + value1;
+			var id = "M" + Pad(address, 3);
+			var cell = document.getElementById(id);
+			destination.value = cell.value;
+		}
+		else if(opCode == "PON_PIXEL")
+		{
+			var value1 = DoGetValue(parts[1]);
+			var value2 = DoGetValue(parts[2]);
+			var value3 = DoGetValue(parts[3]);
+			
+			var address = screenStartAddress + value2 * screenWidth + value1;
+			var id = "M" + Pad(address, 3);
+			var cell = document.getElementById(id);
+			cell.value = value3;
+		}
+		else if(opCode == "EMITE_SONIDO")
+		{
+			var value = DoGetValue(parts[1]);
+			var channel = (numOscillators > 1 ? DoGetValue(parts[2]) : 0);
+
+			
+			if(audioContext != null)
+			{			
+				oscillator[channel].frequency.value = value;
+				lastGeneratedTone[channel] = value;
+				
+				if(!oscillatorConnected[channel])
+				{
+					oscillator[channel].connect(audioContext.destination);				
+					oscillatorConnected[channel] = true;
+				}
+			}
+			else
+			{
+				window.alert("Tienes que habilitar el generador de sonidos primero para usar la instrucción " + opCode + " en la línea de programa " + pc);
+				programEnd = true;
+			}
+
+		
+		}
+		else if(opCode == "PARA_SONIDO")
+		{
+			var channel = (numOscillators > 1 ? DoGetValue(parts[1]) : 0);
+			
+			if(audioContext != null)
+			{	
+				if(oscillatorConnected)
+				{
+					oscillator[channel].disconnect(audioContext.destination);
+					oscillatorConnected[channel] = false;	
+				}
+			}
+			else
+			{
+				window.alert("Tienes que habilitar el generador de sonidos primero para usar la instrucción " + opCode + " en la línea de programa " + pc);
+				programEnd = true;
+			}			
+		}
+		else
+		{
+			window.alert("Instrucción " + opCode + " no reconocida en línea de programa " + pc);
+			programEnd = true;
+		}
+		
+		if(isJump)
+		{
+			pcCell.value = jumpAddress; 
+		}
+		else
+		{
+			if(pc + 1 >= programSize)
+			{
+				programEnd = true;
+			}
+			else
+			{
+				pcCell.value = pc + 1;
+			}
+		}
+		
+		return programEnd;
+	}
+	
+	function ProcessorTick()
+	{	
+		var showPeripheralsState = false;
+		var showCurrentInstruction = false;
+		var forceRefreshScreen = false;
+	
+		if(enableToneGenerator)
+		{		
+			audioContext = new AudioContext();
+			oscillator = [];
+			oscillatorConnected = [];
+			
+			for(var i = 0; i < numOscillators; i++)
+			{
+				oscillator[i] = audioContext.createOscillator();
+				oscillator[i].type = 'square';
+				oscillator[i].start();
+				oscillatorConnected[i] = false;
+			}
+			
+			var button = document.getElementById("EnableToneGenerator");
+			button.style.visibility = "hidden";
+		}
+		
+		if(saveMemoryPressed || saveProgramPressed)
+		{
+			DoSave(saveMemoryPressed);
+		}
+		
+		if(loadMemoryPressed || loadProgramPressed)
+		{
+			DoShowLoadDialog(loadMemoryPressed);
+		}
+		
+	
+		if(resetProcessorPressed || resetMemoryPressed || resetProgramPressed)
+		{
+			DoReset(resetMemoryPressed, resetProcessorPressed, resetProgramPressed);
+			nextState = stateStopped;
+		}
+		else if(state == stateRunning)
+		{
+			var programEnd = false;
+			
+			
+			if(stopPressed)
+			{
+				nextState = stateStopped;
+			}
+			else if(waitTimer)
+			{
+				timer -= 1.0 / processorFrequency * 1000;
+				if(timer < 0) { waitTimer = false; }
+				
+			}
+			else if(waitKey)
+			{
+				if(keyPressed) { waitKey = false; }
+			}
+			else
+			{
+				programEnd = DoInstruction();
+			}
+			
+			if(step)
+			{
+				nextState = stateStopped;				
+				step = false;
+				
+			}
+			else if(programEnd)
+			{
+				nextState = stateStopped;
+			}
+
+			
+			showPeripheralsState = true;
+			
+			
+			
+		}
+		else // state == stateStopped
+		{
+			if(runPressed)
+			{
+				nextState = stateRunning;
+			}
+			else if(stepPressed)
+			{
+				nextState = stateRunning;
+				step = true;
+			}
+		}
+		
+		if(state != nextState)
+		{
+			if(nextState == stateStopped)
+			{
+				if(audioContext != null)
+				{
+					for(var i = 0; i < numOscillators; i ++)
+					{
+						if(oscillatorConnected[i])
+						{
+							oscillator[i].disconnect(audioContext.destination);
+							oscillatorConnected[i] = false;	
+						}
+					
+					}
+				}
+				
+				showPeripheralsState = true;
+				forceRefreshScreen = true;
+				showCurrentInstruction = true;
+			}
+			else if(nextState == stateRunning)
+			{
+				DoUpdateLabels();
+				lastKey = 0;
+				lastRandomNumber = 0;
+				
+				for(var i = 0; i < numOscillators; i++)
+				{
+					lastGeneratedTone[i] = 0;
+				}
+				waitTimer = false;
+				waitKey = false;
+
+			}
+		
+			state = nextState;
+		}
+
+		if(showPeripheralsState)
+		{
+			refreshScreenTickCount ++;
+			if(refreshScreenTickCount >= refreshScreenTicks || forceRefreshScreen)
+			{
+				DoRefreshScreen();
+				refreshScreenTickCount = 0;
+			}
+			document.getElementById("TeclaPulsada").innerHTML = Pad(lastKey, 3);
+			document.getElementById("ValorAleatorioGenerado").innerHTML = Pad(lastRandomNumber, 3);
+			
+			var tones = "";
+			for(var i = 0; i < numOscillators; i ++) { tones += (i > 0 ?  "/" : "") + Pad(lastGeneratedTone[i], 3); }
+			document.getElementById("TonoGenerado").innerHTML = tones;
+		
+		}
+		
+		if(showCurrentInstruction)
+		{
+			for(var i = 0; i < programSize; i++)
+			{
+				var instruction = document.getElementById("P" + Pad(i, 3));
+				instruction.style.backgroundColor = "white";
+			}
+			
+			var pcCell = document.getElementById("PC");
+			var pc = parseInt(pcCell.value);
+			var currentInstruction = document.getElementById("P" + Pad(pc, 3));
+			currentInstruction.style.backgroundColor = "yellow";
+		}
+		
+		resetProcessorPressed = false;
+		resetMemoryPressed = false;
+		resetProgramPressed = false;
+		stepPressed = false;
+		runPressed = false;
+		stopPressed = false;
+		keyPressed = false;
+		enableToneGenerator = false;
+		saveMemoryPressed = false;
+		saveProgramPressed = false;
+		loadMemoryPressed = false;
+		loadProgramPressed = false;
+		showPeripheralsState = false;
+		showCurrentInstruction = false;
+
+	}
+	
+	function Start()
+	{
+		resetProcessorPressed = false;
+		resetMemoryPressed = false;
+		resetProgramPressed = false;
+		stepPressed = false;
+		runPressed = false;
+		stopPressed = false;
+		keyPressed = false;
+		enableToneGenerator = false;
+		saveMemoryPressed = false;
+		saveProgramPressed = false;
+		loadMemoryPressed = false;
+		loadProgramPressed = false;
+		
+		step = false;
+	
+		state = stateStopped;
+		nextState = stateStopped;
+				
+		DoConfigureMachine();
+		
+		screenStartAddress = memorySize - screenWidth * screenHeight;
+		stackStartAddress = screenStartAddress - 1;
+		
+		
+		
+	
+		// Allocate memory
+		
+		var memory = document.getElementById("MemoryTable");
+		var row = document.getElementById("M" + Pad(0, 3)).parentElement.parentElement;
+		
+		for(var i = 0; i < memorySize - 1; i ++)
+		{
+			var duplicatedRow = row.cloneNode(true);
+			duplicatedRow.children[0].children[0].id = "ML" + Pad(i + 1, 3);
+			duplicatedRow.children[1].innerHTML = (i + 1);			
+			duplicatedRow.children[2].children[0].id = "M" + Pad(i + 1, 3);
+			row.parentElement.appendChild(duplicatedRow);
+		}
+		
+		// Allocate program
+		
+		var program = document.getElementById("ProgramTable");
+		row = document.getElementById("P" + Pad(0, 3)).parentElement.parentElement;
+		
+		for(var i = 0; i < programSize - 1; i ++)
+		{
+			var duplicatedRow = row.cloneNode(true);
+			duplicatedRow.children[0].children[0].id = "PL" + Pad(i + 1, 3);
+			duplicatedRow.children[1].innerHTML = (i + 1);			
+			duplicatedRow.children[2].children[0].id = "P" + Pad(i + 1, 3);
+			row.parentElement.appendChild(duplicatedRow);
+		}
+				
+		// Init screen
+		
+		DoRefreshScreen();
+		refreshScreenTicks = processorFrequency / screenFrequency;
+		refreshScreenTickCount = 0;
+		
+		// Init keyboard
+		
+		document.addEventListener('keydown', OnKeyPressed, false);
+		
+		// Init audio
+		
+		lastGeneratedTone = [];
+		
+		// Init processor
+		
+		setInterval(ProcessorTick, 1.0 / processorFrequency * 1000);
+
+		// Reset everything
+		
+		DoReset(true, true, true);
+
+		// Set default labels
+		
+		document.getElementById("ML" + Pad(screenStartAddress, 3)).value = "pantalla";
+		document.getElementById("ML" + Pad(stackStartAddress, 3)).value = "direccionRetorno";
+		document.getElementById("ML" + Pad(stackStartAddress - 1, 3)).value = "valorRetorno";
+		document.getElementById("ML" + Pad(stackStartAddress - 2, 3)).value = "parametro1";
+		document.getElementById("ML" + Pad(stackStartAddress - 3, 3)).value = "parametro2";
+		
+		
+
+		
+		// Show config
+		
+		document.getElementById("TamanyoMemoria").innerHTML = memorySize + " bytes";
+		document.getElementById("TamanyoPrograma").innerHTML = programSize + " instrucciones";
+		document.getElementById("VelocidadProcesador").innerHTML = processorFrequency + " hz";
+		document.getElementById("ResolucionPantalla").innerHTML = screenWidth + "x" + screenHeight + " píxels";
+		document.getElementById("RefrescoPantalla").innerHTML = screenFrequency + " hz";
+		document.getElementById("CanalesSonido").innerHTML = numOscillators;
+		
+		
+		
+		
+	}
+	
+	function OnKeyPressed(e)
+	{
+		lastKey = e.keyCode;
+		keyPressed = true;
+	}
+
+	function OnResetProcessorPressed()
+	{
+		resetProcessorPressed = true;
+	}
+	
+	function OnResetProgramPressed()
+	{
+		resetProgramPressed = true;
+	}
+
+	function OnResetMemoryPressed()
+	{
+		resetMemoryPressed = true;
+	}
+
+	function OnRunPressed()
+	{
+		runPressed = true;
+	}
+	
+	function OnStopPressed()
+	{
+		stopPressed = true;
+	}	
+	
+	function OnStepPressed()
+	{
+		stepPressed = true;
+	}	
+	
+	function OnEnableToneGenerator()
+	{
+		enableToneGenerator = true;
+		
+		ProcessorTick();
+	}
+	
+	function OnSaveMemoryPressed()
+	{
+		saveMemoryPressed = true;
+		
+		ProcessorTick();
+	}
+	
+	function OnSaveProgramPressed()
+	{
+		saveProgramPressed = true;
+		
+		ProcessorTick();
+	}
+	
+	function OnLoadProgramPressed()
+	{
+		loadProgramPressed = true;
+		
+		ProcessorTick();
+	}
+	
+	function OnLoadMemoryPressed()
+	{
+		loadMemoryPressed = true;
+		
+		ProcessorTick();
+	}
+
+	function DoSave(isMemory)
+	{
+		var state = (isMemory ? "memoria\n" : "programa\n");
+		for(var i = 0; i < (isMemory ? memorySize : programSize); i ++)
+		{
+			var cell1 = document.getElementById((isMemory ? "ML" : "PL") + Pad(i, 3));
+			var cell2 = document.getElementById((isMemory ? "M" : "P") + Pad(i, 3));
+			state += cell1.value + ":" + i + ":" + cell2.value + "\n";
+			
+		}
+		
+		var link = document.createElement('a');
+		link.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(state));
+		link.setAttribute('download', (isMemory ? "memory" : "program") + "_state.txt");
+		link.style.display = 'none';
+		document.body.appendChild(link);		
+		link.click();
+		document.body.removeChild(link);
+
+	}
+	
+	function DoLoad1(file, isLoadMemory)
+	{		
+		var fileReader = new FileReader();
+		
+		
+		var text = fileReader.readAsText(file);
+		var doLoadFunction = function() { DoLoad2(this.result, isLoadMemory); }
+		
+		fileReader.onload = doLoadFunction;
+				
+	}
+	
+	function DoLoad2(contents, isLoadMemory)
+	{
+		var lines = contents.split("\n");
+		
+		var startLine = 1;
+		
+		for(var i = 0; i < Math.min((isLoadMemory ? memorySize : programSize), lines.length - 1); i ++)
+		{
+			var parts = lines[startLine + i].split(":");
+		
+			var cell1 = document.getElementById((isLoadMemory ? "ML" : "PL") + Pad(i, 3));
+			var cell2 = document.getElementById((isLoadMemory ? "M" : "P") + Pad(i, 3));
+			cell1.value = parts[0];
+			cell2.value = parts[2];
+		}
+		
+		if(lines.length - 2 > (isLoadMemory ? memorySize : programSize))
+		{
+			window.alert("Lineas " + lines.length);
+			window.alert("Es posible que " + (isLoadMemory ? "algunos contenidos de memoria " : "algunas instrucciones ") + " no se hayan podido cargar porque el tamaño de " + (isLoadMemory ? "memoria": "programa") + " es demasiado pequeño");
+		}
+
+	}
+	
+	
+	
+	function DoShowLoadDialog(isLoadMemory)
+	{
+		var input = document.createElement('input');
+		input.style.display = 'none';
+		input.type = "file";
+		document.body.appendChild(input);
+		
+		var doLoadFunction = function() { DoLoad1(this.files[0], isLoadMemory); }
+		
+		input.addEventListener('change', doLoadFunction);
+		input.click();
+		document.body.removeChild(input);
+	}
+	
+	// Utils
+	
+
+	
+	function LoadTextFromFile(fileName)
+	{
+
+
+		return text;
+	}
+	
+	function RemoveEqualTo(array, value)
+	{
+		var i = 0;
+		var result = [];
+		for(var j = 0; j < array.length; j++)
+		{
+			if(array[j] != value)
+			{
+				result[i] = array[j];
+				i ++;
+			}
+		}
+		
+		return result;
+	}
+	
+	function Pad(number, length)
+	{
+		var s = number + "";
+		
+		var z = (length - s.length);
+		for(var i = 0; i < z; i ++) { s = "0" + s; }
+		
+		return s;
+	}
+	
+	function IsDigit(character)
+	{
+		var result = character == '0' ||
+					character == '1' ||
+					character == '2' ||
+					character == '3' ||
+					character == '4' ||
+					character == '5' ||
+					character == '6' ||
+					character == '7' ||
+					character == '8' ||
+					character == '9';
+					
+		return result;
+					
+	}
+	
+
+</script>
+</head>
+<body class="background3" onload="Start()">
+<div id="Memoria" class="column bordered smoothborder padded margined background1 shadowed">
+Memoria
+<table>
+<tr><td><button id="ResetMemory" class="notbordered" onclick="OnResetMemoryPressed()">Reset</button><button class="notbordered" id="Save" onclick="OnSaveMemoryPressed()">Salvar</button><button class="notbordered" id="Load" onclick="OnLoadMemoryPressed()">Cargar</button></td></tr>
+</table>
+<table id="MemoryTable">
+<tr><td><input type="text" id="ML000" class="inputlabel notbordered rightaligned background1">:</td><td>0</td><td><input type="text" id="M000"></td></tr>
+</table>
+</div>
+<div class="column">
+<div id="Procesador" class="bordered smoothborder padded margined background1 shadowed">
+Procesador
+<table>
+<tr><td>A</td><td><input type="text" id="RA"></td></tr>
+<tr><td>B</td><td><input type="text" id="RB"></td></tr>
+<tr><td>C</td><td><input type="text" id="RC"></td></tr>
+<tr><td>PC</td><td><input type="text" id="PC"></td></tr>
+</table>
+<table>
+<tr><td><button id="ResetProcessor" onclick="OnResetProcessorPressed()">Reset</button><button id="Run"  onclick="OnRunPressed()">Run</button><button id="Stop"  onclick="OnStopPressed()">Stop</button><button id="Step" onclick="OnStepPressed()">Step</button></tr>
+</table>
+</div>
+<div id="GeneradorNumerosAleatorios" class="bordered smoothborder padded margined background1 shadowed">
+Generador de números aleatorios
+<table>
+<tr><td><img class="halfwidth" src="images\dice.png"></td><td id="ValorAleatorioGenerado" class="periphericValue bold"></td></tr>
+</table>
+</div>
+<div id="GeneradorTonos" class="bordered smoothborder padded margined background1 shadowed">
+Generador de tonos
+<table>
+<tr><td><img class="halfwidth" src="images\speaker.png"><button class="notbordered" id="EnableToneGenerator" onclick="OnEnableToneGenerator()">Habilitar</button></td><td id="TonoGenerado" class="periphericValue bold"></td></tr>
+</table>
+</div>
+<div id="Teclado" class="bordered smoothborder padded margined background1 shadowed">
+Teclado
+<table>
+<tr><td><img class="halfwidth" src="images\keyboard.png"></td><td id="TeclaPulsada" class="periphericValue bold"></td></tr>
+</table>
+</div>
+<div id="Pantalla" class="bordered smoothborder padded margined background1 shadowed">
+Pantalla
+<table class = "fullwidth">
+<tr><td>&nbsp;</td><td class = "centered">0</td><td class = "centered">1</td><td class = "centered">2</td><td class = "centered">3</td><td class = "centered">4</td><td class = "centered">5</td><td class = "centered">6</td><td class = "centered">7</td></tr>
+<tr><td class = "rightaligned">0</td><td id="SX0Y0" class="bordered">&nbsp;</td><td id="SX1Y0" class="bordered">&nbsp;</td><td id="SX2Y0" class="bordered">&nbsp;</td><td id="SX3Y0" class="bordered">&nbsp;</td><td id="SX4Y0" class="bordered">&nbsp;</td><td id="SX5Y0" class="bordered">&nbsp;</td><td id="SX6Y0" class="bordered">&nbsp;</td><td id="SX7Y0" class="bordered">&nbsp;</td></tr>
+<tr><td class = "rightaligned">1</td><td id="SX0Y1" class="bordered">&nbsp;</td><td id="SX1Y1" class="bordered">&nbsp;</td><td id="SX2Y1" class="bordered">&nbsp;</td><td id="SX3Y1" class="bordered">&nbsp;</td><td id="SX4Y1" class="bordered">&nbsp;</td><td id="SX5Y1" class="bordered">&nbsp;</td><td id="SX6Y1" class="bordered">&nbsp;</td><td id="SX7Y1" class="bordered">&nbsp;</td></tr>
+<tr><td class = "rightaligned">2</td><td id="SX0Y2" class="bordered">&nbsp;</td><td id="SX1Y2" class="bordered">&nbsp;</td><td id="SX2Y2" class="bordered">&nbsp;</td><td id="SX3Y2" class="bordered">&nbsp;</td><td id="SX4Y2" class="bordered">&nbsp;</td><td id="SX5Y2" class="bordered">&nbsp;</td><td id="SX6Y2" class="bordered">&nbsp;</td><td id="SX7Y2" class="bordered">&nbsp;</td></tr>
+<tr><td class = "rightaligned">3</td><td id="SX0Y3" class="bordered">&nbsp;</td><td id="SX1Y3" class="bordered">&nbsp;</td><td id="SX2Y3" class="bordered">&nbsp;</td><td id="SX3Y3" class="bordered">&nbsp;</td><td id="SX4Y3" class="bordered">&nbsp;</td><td id="SX5Y3" class="bordered">&nbsp;</td><td id="SX6Y3" class="bordered">&nbsp;</td><td id="SX7Y3" class="bordered">&nbsp;</td></tr>
+<tr><td class = "rightaligned">4</td><td id="SX0Y4" class="bordered">&nbsp;</td><td id="SX1Y4" class="bordered">&nbsp;</td><td id="SX2Y4" class="bordered">&nbsp;</td><td id="SX3Y4" class="bordered">&nbsp;</td><td id="SX4Y4" class="bordered">&nbsp;</td><td id="SX5Y4" class="bordered">&nbsp;</td><td id="SX6Y4" class="bordered">&nbsp;</td><td id="SX7Y4" class="bordered">&nbsp;</td></tr>
+<tr><td class = "rightaligned">5</td><td id="SX0Y5" class="bordered">&nbsp;</td><td id="SX1Y5" class="bordered">&nbsp;</td><td id="SX2Y5" class="bordered">&nbsp;</td><td id="SX3Y5" class="bordered">&nbsp;</td><td id="SX4Y5" class="bordered">&nbsp;</td><td id="SX5Y5" class="bordered">&nbsp;</td><td id="SX6Y5" class="bordered">&nbsp;</td><td id="SX7Y5" class="bordered">&nbsp;</td></tr>
+<tr><td class = "rightaligned">6</td><td id="SX0Y6" class="bordered">&nbsp;</td><td id="SX1Y6" class="bordered">&nbsp;</td><td id="SX2Y6" class="bordered">&nbsp;</td><td id="SX3Y6" class="bordered">&nbsp;</td><td id="SX4Y6" class="bordered">&nbsp;</td><td id="SX5Y6" class="bordered">&nbsp;</td><td id="SX6Y6" class="bordered">&nbsp;</td><td id="SX7Y6" class="bordered">&nbsp;</td></tr>
+<tr><td class = "rightaligned">7</td><td id="SX0Y7" class="bordered">&nbsp;</td><td id="SX1Y7" class="bordered">&nbsp;</td><td id="SX2Y7" class="bordered">&nbsp;</td><td id="SX3Y7" class="bordered">&nbsp;</td><td id="SX4Y7" class="bordered">&nbsp;</td><td id="SX5Y7" class="bordered">&nbsp;</td><td id="SX6Y7" class="bordered">&nbsp;</td><td id="SX7Y7" class="bordered">&nbsp;</td></tr>
+</table>
+</div>
+<div id="Informacion" class="bordered smoothborder padded margined background1 shadowed">
+Información
+<div><img class="halfwidth margined" src="images/logo.png"></div>
+<table>
+<tr><td>Versión:</td><td><em id="Version">1.4</td></tr>
+<tr><td>Memoria:</td><td><em id="TamanyoMemoria"></td></tr>
+<tr><td>Programa:</td><td><em id="TamanyoPrograma"></td></tr>
+<tr><td>Velocidad:</td><td><em id="VelocidadProcesador"></td></tr>
+<tr><td>Resolución:</td><td><em id="ResolucionPantalla"></td></tr>
+<tr><td>Refresco:</td><td><em id="RefrescoPantalla"></td></tr>
+<tr><td>Canales:</td><td><em id="CanalesSonido" class="floatright"></td></tr>
+</table>
+</div>
+</div>
+<div id="Programa" class="column bordered smoothborder padded margined background1 shadowed margined">
+Programa
+<table>
+<tr><td><button class="notbordered" id="ResetProgram" onclick="OnResetProgramPressed()">Reset</button><button class="notbordered" id="Save" onclick="OnSaveProgramPressed()">Salvar</button><button class="notbordered" id="Load" onclick="OnLoadProgramPressed()">Cargar</button></td></tr>
+</table>
+<table id="ProgramTable">
+<tr><td><input type="text" id="PL000" class="inputlabel notbordered rightaligned background1">:</td><td>0</td><td><input type="text" class="inputInstruction" id="P000"></td></tr>
+</table>
+</div>
+<div id="Instrucciones" class="column padded margined grayed bold background2">
+<table class = "smaller grayed preformated">
+<tr><td>Instrucciones</td></tr>
+<tr><td>------------------</td></tr>
+<tr><td>MUEVE(MUE)       destino origen</td></tr>
+<tr><td>SUMA(SUM)        destino origen1 origen2</td></tr>
+<tr><td>RESTA(RES)       destino origen1 origen2</td></tr>
+<tr><td>MULTIPLICA(MUL)  destino origen1 origen2</td></tr>
+<tr><td>DIVIDE(DIV)      destino origen1 origen2</td></tr>
+<tr><td>MAYOR(MA)        destino origen1 origen2</td></tr>
+<tr><td>MAYORIGUAL(MAI)  destino origen1 origen2</td></tr>
+<tr><td>MENOR(ME)        destino origen1 origen2</td></tr>
+<tr><td>MENORIGUAL(MEI)  destino origen1 origen2</td></tr>
+<tr><td>IGUAL(IG)        destino origen1 origen2</td></tr>
+<tr><td>DIFERENTE(DIF)   destino origen1 origen2</td></tr>
+<tr><td>AND              destino origen1 origen2</td></tr>
+<tr><td>OR               destino origen1 origen2</td></tr>
+<tr><td>NOT              destino origen</td></tr>
+<tr><td>SALTASIMAYOR(SMA)       direccionPrograma origen1 origen2</td></tr>
+<tr><td>SALTASIMAYORIGUAL(SMAI) direccionPrograma origen1 origen2</td></tr>
+<tr><td>SALTASIMENOR(SME)       direccionPrograma origen1 origen2</td></tr>
+<tr><td>SALTASIMENORIGUAL(SMEI) direccionPrograma origen1 origen2</td></tr>
+<tr><td>SALTASIIGUAL(SIG)       direccionPrograma origen1 origen2</td></tr>
+<tr><td>SALTASIDIFERENTE(SDIF)  direccionPrograma origen1 origen2</td></tr>
+<tr><td>SALTASICIERTO(SC)       direccionPrograma origen</td></tr>
+<tr><td>SALTASIFALSO(SF)        direccionPrograma origen</td></tr>
+<tr><td>SALTA(S)        direccionPrograma</td></tr>
+<tr><td>LLAMA(LL)       direccionPrograma</td></tr>
+<tr><td>RETORNA(RET)</td></tr>
+<tr><td>MUEVEVALORDIRECCION(MUEVD) destino direccion</td></tr>
+<tr><td>MUEVEVALORDIRECCION(MUEVD) destino direccion</td></tr>
+<tr><td>ESPERA           tiempo</td></tr>
+<tr><td>NUMERO_ALEATORIO destino origen1 origen2</td></tr>
+<tr><td>ESPERA_ENTRADA_TECLADO</td></tr>
+<tr><td>LIMPIA_ENTRADA_TECLADO</td></tr>
+<tr><td>ENTRADA_TECLADO  destino</td></tr>
+<tr><td>LIMPIA_PANTALLA</td></tr>
+<tr><td>PON_PIXEL        destinoX destinoY origen</td></tr>
+<tr><td>OBTEN_PIXEL      destino origenX origenY</td></tr>
+<tr><td>EMITE_SONIDO     frecuencia canal</td></tr>
+<tr><td>PARA_SONIDO      canal</td></tr>
+<tr><td>&nbsp;</td></tr>
+<tr><td>Destino/Origen</td></tr>
+<tr><td>------------------</td></tr>
+<tr><td>A      Registro</td></tr>
+<tr><td>@10    Posición de memoria</td></tr>
+<tr><td>27     Valor</td></tr>
+<tr><td>@10[A] Posicion con desplazamiento</td></tr>
+</table>
+</div>
+</body>
+</html>
